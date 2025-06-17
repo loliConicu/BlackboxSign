@@ -60,12 +60,14 @@ jobs:
             
             console.log("Server酱推送成功");
             console.log(`状态码: ${result.status}, 响应: ${JSON.stringify(result.data)}`);
+            return true;
           } catch (error) {
             console.error("Server酱推送失败:", error.message);
+            return false;
           }
         }
         
-        // 签到函数
+        // 使用最新API路径的小黑盒签到函数
         async function signIn() {
           try {
             console.log(`开始小黑盒签到任务 - ${new Date().toLocaleString('zh-CN')}`);
@@ -88,42 +90,63 @@ jobs:
               
               console.log(`正在签到账号: ${heyboxId}`);
               
-              // 这里应调用真实的小黑盒签到API
-              // 以下是模拟的API请求
-              const result = await axios.get('https://api.xiaoheihe.cn/game/sign_in', {
-                headers: {
-                  'Cookie': cookies,
-                  'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+              try {
+                // 使用正确的签到API路径
+                const result = await axios.post(
+                  'https://api.xiaoheihe.cn/account/sign_in/', 
+                  {}, 
+                  {
+                    headers: {
+                      'Cookie': cookies,
+                      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+                    }
+                  }
+                );
+                
+                // 解析返回结果
+                if (result.data && result.data.code === 0) {
+                  console.log(`签到成功: ${JSON.stringify(result.data)}`);
+                  results.push({
+                    account: heyboxId,
+                    status: '成功',
+                    message: result.data.message || '签到成功'
+                  });
+                } else {
+                  results.push({
+                    account: heyboxId,
+                    status: '失败',
+                    message: result.data?.msg || `服务器返回: ${result.status}`
+                  });
                 }
-              });
-              
-              // 解析返回结果
-              if (result.data && result.data.code === 0) {
-                console.log(`签到成功: ${JSON.stringify(result.data)}`);
+              } catch (error) {
+                console.error(`账号 ${heyboxId} 请求失败: ${error.message}`);
                 results.push({
                   account: heyboxId,
-                  status: '成功',
-                  message: '签到获得100盒币'
+                  status: '请求失败',
+                  message: error.message
                 });
-              } else {
-                throw new Error(result.data?.msg || '未知错误');
               }
             }
             
-            const content = results.map(r => `账号 ${r.account}: ${r.status} (${r.message})`).join('\n');
-            const title = `小黑盒签到成功 - ${getDate()}`;
+            // 构造通知内容
+            const dateStr = getDate();
+            const title = `小黑盒签到结果 - ${dateStr}`;
+            
+            let content = `## 签到结果 (${dateStr})\n\n`;
+            content += results.map(r => `🔹 **账号 ${r.account}**: ${r.status}\n💬 ${r.message}`).join('\n\n');
+            content += `\n\n> 执行时间: ${new Date().toLocaleString('zh-CN')}`;
             
             // 发送Server酱通知
             await serverchanNotify(title, content);
             
-            return { success: true };
+            return { success: true, results };
             
           } catch (error) {
-            console.error("签到失败:", error.message);
+            console.error("签到主流程错误:", error.message);
             
             // 发送错误通知
             await serverchanNotify(
-              "小黑盒签到失败", 
+              "小黑盒签到出错", 
               `错误信息: ${error.message}\n时间: ${new Date().toLocaleString('zh-CN')}`
             );
             
@@ -134,11 +157,11 @@ jobs:
         // 主函数
         (async () => {
           try {
-            await signIn();
-            console.log("所有签到任务完成");
-            process.exit(0);
+            const signResult = await signIn();
+            console.log("签到任务完成:", signResult.success ? "成功" : "失败");
+            process.exit(signResult.success ? 0 : 1);
           } catch (error) {
-            console.error("签到任务执行失败");
+            console.error("签到任务执行失败", error);
             process.exit(1);
           }
         })();
@@ -157,5 +180,5 @@ jobs:
       with:
         name: sign-logs
         path: |
-          *.log
+          sign.js  # 包含日志的输出文件
         retention-days: 7
