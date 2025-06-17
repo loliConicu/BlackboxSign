@@ -1,0 +1,136 @@
+name: 小黑盒每日签到
+
+on:
+  schedule:
+    # 每天早上8点执行 (UTC时间，北京时间需要减8小时)
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Python环境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: 缓存依赖
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        if [ -f requirement.txt ]; then pip install -r requirement.txt; fi
+        # 常见的签到脚本依赖
+        pip install requests beautifulsoup4 lxml
+        
+    - name: 运行签到脚本
+      env:
+        # 从GitHub Secrets中获取敏感信息
+        BLACKBOX_USERNAME: ${{ secrets.BLACKBOX_USERNAME }}
+        BLACKBOX_PASSWORD: ${{ secrets.BLACKBOX_PASSWORD }}
+        BLACKBOX_TOKEN: ${{ secrets.BLACKBOX_TOKEN }}
+        # 推送相关配置
+        PUSH_KEY: ${{ secrets.PUSH_KEY }}
+        BARK_PUSH: ${{ secrets.BARK_PUSH }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        DD_BOT_TOKEN: ${{ secrets.DD_BOT_TOKEN }}
+        DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
+        QYWX_WEBHOOK: ${{ secrets.QYWX_WEBHOOK }}
+        # 其他可能需要的环境变量
+        SCKEY: ${{ secrets.SCKEY }}
+        SENDKEY: ${{ secrets.SENDKEY }}
+      run: |
+        # 根据项目结构调整主脚本文件名
+        if [ -f "main.py" ]; then
+          python main.py
+        elif [ -f "sign.py" ]; then
+          python sign.py
+        elif [ -f "blackbox.py" ]; then
+          python blackbox.py
+        elif [ -f "run.py" ]; then
+          python run.py
+        else
+          echo "未找到主执行文件，请检查项目结构"
+          ls -la
+        fi
+        
+    - name: 上传日志
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: sign-logs
+        path: |
+          *.log
+          logs/
+          log/
+        retention-days: 7
+
+---
+
+# 使用说明
+
+## 1. 设置GitHub Secrets
+
+在你的GitHub仓库中，前往 `Settings` > `Secrets and variables` > `Actions`，添加以下secrets：
+
+### 必需的Secrets：
+- `BLACKBOX_USERNAME`: 小黑盒用户名
+- `BLACKBOX_PASSWORD`: 小黑盒密码
+- `BLACKBOX_TOKEN`: 小黑盒token（如果需要）
+
+### 可选的推送Secrets：
+- `PUSH_KEY`: Server酱推送key
+- `BARK_PUSH`: Bark推送key
+- `TG_BOT_TOKEN`: Telegram机器人token
+- `TG_USER_ID`: Telegram用户ID
+- `DD_BOT_TOKEN`: 钉钉机器人token
+- `DD_BOT_SECRET`: 钉钉机器人secret
+- `QYWX_WEBHOOK`: 企业微信webhook
+
+## 2. 工作流配置
+
+### 定时任务：
+- 默认每天UTC 0点执行（北京时间8点）
+- 可以修改cron表达式来调整执行时间
+
+### 手动触发：
+- 在Actions页面可以手动运行工作流
+- 用于测试或紧急执行
+
+## 3. 文件结构适配
+
+工作流会自动寻找以下主执行文件：
+- `main.py`
+- `sign.py`
+- `blackbox.py`
+- `run.py`
+
+如果你的主文件名不同，请修改工作流中的运行脚本部分。
+
+## 4. 时区调整
+
+如果需要调整执行时间，修改cron表达式：
+```yaml
+# 北京时间每天8点执行
+- cron: '0 0 * * *'  # UTC 0点 = 北京时间8点
+
+# 北京时间每天12点执行  
+- cron: '0 4 * * *'  # UTC 4点 = 北京时间12点
+```
