@@ -2,9 +2,13 @@ name: 小黑盒每日签到
 
 on:
   schedule:
-    # 每天早上8点执行 (UTC时间0点 = 北京时间8点)
+    # 每天早上8点执行 (UTC时间，北京时间需要减8小时)
     - cron: '0 0 * * *'
   workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   sign:
@@ -17,7 +21,7 @@ jobs:
     - name: 设置Node.js环境
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '18'
         
     - name: 缓存依赖
       uses: actions/cache@v4
@@ -29,150 +33,79 @@ jobs:
           
     - name: 安装依赖
       run: |
-        npm init -y
-        npm install axios
-        
-    - name: 创建签到脚本
-      run: |
-        cat > sign.js << 'EOF'
-        const axios = require('axios');
-        const fs = require('fs');
-        const path = require('path');
-        
-        // 获取当前日期
-        function getDate() {
-          const now = new Date();
-          return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
-        }
-        
-        // Server酱推送
-        async function serverchanNotify(title, content) {
-          const SERVERCHAN_KEY = process.env.SERVERCHAN_KEY;
-          if (!SERVERCHAN_KEY) return;
-          
-          console.log("准备通过Server酱发送通知...");
-          
-          try {
-            const result = await axios.post(`https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send`, {
-              title: title,
-              desp: content
-            });
-            
-            console.log("Server酱推送成功");
-            console.log(`状态码: ${result.status}, 响应: ${JSON.stringify(result.data)}`);
-            return true;
-          } catch (error) {
-            console.error("Server酱推送失败:", error.message);
-            return false;
-          }
-        }
-        
-        // 使用最新API路径的小黑盒签到函数
-        async function signIn() {
-          try {
-            console.log(`开始小黑盒签到任务 - ${new Date().toLocaleString('zh-CN')}`);
-            
-            // 获取环境变量
-            const cookie = process.env.BLACKBOX_COOKIE;
-            
-            if (!cookie) {
-              throw new Error("未设置BLACKBOX_COOKIE环境变量");
-            }
-            
-            // 分割多个账号
-            const accounts = cookie.split('&');
-            console.log(`检测到 ${accounts.length} 个账号`);
-            
-            let results = [];
-            
-            for (const account of accounts) {
-              const [heyboxId, cookies] = account.split('#');
-              
-              console.log(`正在签到账号: ${heyboxId}`);
-              
-              try {
-                // 使用正确的签到API路径
-                const result = await axios.post(
-                  'https://api.xiaoheihe.cn/account/sign_in/', 
-                  {}, 
-                  {
-                    headers: {
-                      'Cookie': cookies,
-                      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
-                    }
-                  }
-                );
-                
-                // 解析返回结果
-                if (result.data && result.data.code === 0) {
-                  console.log(`签到成功: ${JSON.stringify(result.data)}`);
-                  results.push({
-                    account: heyboxId,
-                    status: '成功',
-                    message: result.data.message || '签到成功'
-                  });
-                } else {
-                  results.push({
-                    account: heyboxId,
-                    status: '失败',
-                    message: result.data?.msg || `服务器返回: ${result.status}`
-                  });
-                }
-              } catch (error) {
-                console.error(`账号 ${heyboxId} 请求失败: ${error.message}`);
-                results.push({
-                  account: heyboxId,
-                  status: '请求失败',
-                  message: error.message
-                });
-              }
-            }
-            
-            // 构造通知内容
-            const dateStr = getDate();
-            const title = `小黑盒签到结果 - ${dateStr}`;
-            
-            let content = `## 签到结果 (${dateStr})\n\n`;
-            content += results.map(r => `🔹 **账号 ${r.account}**: ${r.status}\n💬 ${r.message}`).join('\n\n');
-            content += `\n\n> 执行时间: ${new Date().toLocaleString('zh-CN')}`;
-            
-            // 发送Server酱通知
-            await serverchanNotify(title, content);
-            
-            return { success: true, results };
-            
-          } catch (error) {
-            console.error("签到主流程错误:", error.message);
-            
-            // 发送错误通知
-            await serverchanNotify(
-              "小黑盒签到出错", 
-              `错误信息: ${error.message}\n时间: ${new Date().toLocaleString('zh-CN')}`
-            );
-            
-            throw error; // 抛出错误使工作流失败
-          }
-        }
-        
-        // 主函数
-        (async () => {
-          try {
-            const signResult = await signIn();
-            console.log("签到任务完成:", signResult.success ? "成功" : "失败");
-            process.exit(signResult.success ? 0 : 1);
-          } catch (error) {
-            console.error("签到任务执行失败", error);
-            process.exit(1);
-          }
-        })();
-        EOF
+        if [ -f package.json ]; then
+          npm install
+        else
+          # 如果没有package.json，安装常见的签到脚本依赖
+          npm install axios cheerio crypto-js
+        fi
         
     - name: 运行签到脚本
       env:
-        BLACKBOX_COOKIE: ${{ secrets.BLACKBOX_COOKIE }}  # 使用您之前提取的cookie
-        SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}     # Server酱推送KEY
+        # 从GitHub Secrets中获取敏感信息
+        BLACKBOX_USERNAME: ${{ secrets.BLACKBOX_USERNAME }}
+        BLACKBOX_PASSWORD: ${{ secrets.BLACKBOX_PASSWORD }}
+        BLACKBOX_TOKEN: ${{ secrets.BLACKBOX_TOKEN }}
+        # 小黑盒相关环境变量
+        BLACKBOX_COOKIE: ${{ secrets.BLACKBOX_COOKIE }}
+        BLACKBOX_USERID: ${{ secrets.BLACKBOX_USERID }}
+        BLACKBOX_SESSDATA: ${{ secrets.BLACKBOX_SESSDATA }}
+        # 推送相关配置 - 仅添加Server酱Key
+        SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        # 原有推送配置保持不变
+        PUSH_KEY: ${{ secrets.PUSH_KEY }}
+        BARK_PUSH: ${{ secrets.BARK_PUSH }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        DD_BOT_TOKEN: ${{ secrets.DD_BOT_TOKEN }}
+        DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
+        QYWX_WEBHOOK: ${{ secrets.QYWX_WEBHOOK }}
+        # 其他可能需要的环境变量
+        SCKEY: ${{ secrets.SCKEY }}
+        SENDKEY: ${{ secrets.SENDKEY }}
+        # 青龙面板相关
+        QL_URL: ${{ secrets.QL_URL }}
+        QL_CLIENT_ID: ${{ secrets.QL_CLIENT_ID }}
+        QL_CLIENT_SECRET: ${{ secrets.QL_CLIENT_SECRET }}
+        # 设置默认值防止undefined错误
+        NODE_ENV: production
+        TZ: Asia/Shanghai
       run: |
-        node sign.js
+        # 检查关键环境变量
+        echo "检查环境变量..."
+        if [ -z "$BLACKBOX_USERNAME" ] && [ -z "$BLACKBOX_COOKIE" ]; then
+          echo "⚠️  警告: 未设置 BLACKBOX_USERNAME 或 BLACKBOX_COOKIE"
+          echo "请在 GitHub Secrets 中添加必要的认证信息"
+        fi
+        
+        # 检查Server酱Key
+        if [ -n "$SERVERCHAN_KEY" ]; then
+          echo "⚠️  注意: Server酱推送功能已启用"
+        fi
+        
+        # 根据项目结构调整主脚本文件名
+        if [ -f "BlackBoxSign.js" ]; then
+          echo "执行 BlackBoxSign.js..."
+          node BlackBoxSign.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "main.js" ]; then
+          echo "执行 main.js..."
+          node main.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "sign.js" ]; then
+          echo "执行 sign.js..."
+          node sign.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "blackbox.js" ]; then
+          echo "执行 blackbox.js..."
+          node blackbox.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "run.js" ]; then
+          echo "执行 run.js..."
+          node run.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "index.js" ]; then
+          echo "执行 index.js..."
+          node index.js || echo "❌ 脚本执行失败，退出码: $?"
+        else
+          echo "未找到主执行文件，请检查项目结构"
+          ls -la
+        fi
         
     - name: 上传日志
       if: always()
@@ -180,5 +113,7 @@ jobs:
       with:
         name: sign-logs
         path: |
-          sign.js  # 包含日志的输出文件
+          *.log
+          logs/
+          log/
         retention-days: 7
