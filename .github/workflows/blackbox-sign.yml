@@ -18,26 +18,27 @@ jobs:
     - name: 检出代码
       uses: actions/checkout@v4
       
-    - name: 设置Python环境
-      uses: actions/setup-python@v5
+    - name: 设置Node.js环境
+      uses: actions/setup-node@v4
       with:
-        python-version: '3.9'
+        node-version: '18'
         
     - name: 缓存依赖
       uses: actions/cache@v4
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        path: ~/.npm
+        key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
         restore-keys: |
-          ${{ runner.os }}-pip-
+          ${{ runner.os }}-node-
           
     - name: 安装依赖
       run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        if [ -f requirement.txt ]; then pip install -r requirement.txt; fi
-        # 常见的签到脚本依赖
-        pip install requests beautifulsoup4 lxml
+        if [ -f package.json ]; then
+          npm install
+        else
+          # 如果没有package.json，安装常见的签到脚本依赖
+          npm install axios cheerio crypto-js
+        fi
         
     - name: 运行签到脚本
       env:
@@ -58,14 +59,18 @@ jobs:
         SENDKEY: ${{ secrets.SENDKEY }}
       run: |
         # 根据项目结构调整主脚本文件名
-        if [ -f "main.py" ]; then
-          python main.py
-        elif [ -f "sign.py" ]; then
-          python sign.py
-        elif [ -f "blackbox.py" ]; then
-          python blackbox.py
-        elif [ -f "run.py" ]; then
-          python run.py
+        if [ -f "BlackBoxSign.js" ]; then
+          node BlackBoxSign.js
+        elif [ -f "main.js" ]; then
+          node main.js
+        elif [ -f "sign.js" ]; then
+          node sign.js
+        elif [ -f "blackbox.js" ]; then
+          node blackbox.js
+        elif [ -f "run.js" ]; then
+          node run.js
+        elif [ -f "index.js" ]; then
+          node index.js
         else
           echo "未找到主执行文件，请检查项目结构"
           ls -la
@@ -117,10 +122,12 @@ jobs:
 ## 3. 文件结构适配
 
 工作流会自动寻找以下主执行文件：
-- `main.py`
-- `sign.py`
-- `blackbox.py`
-- `run.py`
+- `BlackBoxSign.js` （当前项目的主文件）
+- `main.js`
+- `sign.js`
+- `blackbox.js`
+- `run.js`
+- `index.js`
 
 如果你的主文件名不同，请修改工作流中的运行脚本部分。
 
