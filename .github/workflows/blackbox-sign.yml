@@ -2,10 +2,9 @@ name: 小黑盒每日签到
 
 on:
   schedule:
-    # 调整执行时间为北京时间6:00和6:10（UTC时间22:00和22:10）
     - cron: '0 22 * * *'   # UTC 22:00 = 北京时间6:00
-    - cron: '10 22 * * *'  # UTC 22:10 = 北京时间6:10
-  workflow_dispatch:  # 允许手动触发
+    - cron: '10 22 * * *'  # UTC 22:10 = 北京时间6:10（备用）
+  workflow_dispatch:
   push:
     branches: [ main, master ]
   pull_request:
@@ -37,109 +36,86 @@ jobs:
         if [ -f package.json ]; then
           npm install
         else
-          # 如果没有package.json，安装常见的签到脚本依赖
           npm install axios cheerio crypto-js
         fi
         
     - name: 运行签到脚本
       env:
-        # 从GitHub Secrets中获取敏感信息
         BLACKBOX_USERNAME: ${{ secrets.BLACKBOX_USERNAME }}
         BLACKBOX_PASSWORD: ${{ secrets.BLACKBOX_PASSWORD }}
         BLACKBOX_TOKEN: ${{ secrets.BLACKBOX_TOKEN }}
-        # 小黑盒相关环境变量
         BLACKBOX_COOKIE: ${{ secrets.BLACKBOX_COOKIE }}
         BLACKBOX_USERID: ${{ secrets.BLACKBOX_USERID }}
         BLACKBOX_SESSDATA: ${{ secrets.BLACKBOX_SESSDATA }}
-        # 推送相关配置
-        PUSH_KEY: ${{ secrets.PUSH_KEY }}
-        BARK_PUSH: ${{ secrets.BARK_PUSH }}
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        TG_USER_ID: ${{ secrets.TG_USER_ID }}
-        DD_BOT_TOKEN: ${{ secrets.DD_BOT_TOKEN }}
-        DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
-        QYWX_WEBHOOK: ${{ secrets.QYWX_WEBHOOK }}
-        # 其他可能需要的环境变量
-        SCKEY: ${{ secrets.SCKEY }}         # Server酱推送密钥
-        SENDKEY: ${{ secrets.SENDKEY }}
-        # 青龙面板相关
-        QL_URL: ${{ secrets.QL_URL }}
-        QL_CLIENT_ID: ${{ secrets.QL_CLIENT_ID }}
-        QL_CLIENT_SECRET: ${{ secrets.QL_CLIENT_SECRET }}
-        # 设置默认值防止undefined错误
+        SCKEY: ${{ secrets.SCKEY }}  # Server酱密钥
         NODE_ENV: production
         TZ: Asia/Shanghai
       run: |
-        # 记录开始时间用于Server酱通知
         echo "START_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
         
-        # 检查关键环境变量
         echo "检查环境变量..."
         if [ -z "$BLACKBOX_USERNAME" ] && [ -z "$BLACKBOX_COOKIE" ]; then
-          echo "⚠️  警告: 未设置 BLACKBOX_USERNAME 或 BLACKBOX_COOKIE"
-          echo "请在 GitHub Secrets 中添加必要的认证信息"
+          echo "⚠️ 未设置 BLACKBOX_USERNAME 或 BLACKBOX_COOKIE"
         fi
         
-        # 根据项目结构调整主脚本文件名
         if [ -f "BlackBoxSign.js" ]; then
-          echo "执行 BlackBoxSign.js..."
-          node BlackBoxSign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
+          node BlackBoxSign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本失败"
         elif [ -f "main.js" ]; then
-          echo "执行 main.js..."
-          node main.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
+          node main.js && echo "SUCCESS=true" >> $GITHUB_ENV
         elif [ -f "sign.js" ]; then
-          echo "执行 sign.js..."
-          node sign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
-        elif [ -f "blackbox.js" ]; then
-          echo "执行 blackbox.js..."
-          node blackbox.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
-        elif [ -f "run.js" ]; then
-          echo "执行 run.js..."
-          node run.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
+          node sign.js && echo "SUCCESS=true" >> $GITHUB_ENV
         elif [ -f "index.js" ]; then
-          echo "执行 index.js..."
-          node index.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
+          node index.js && echo "SUCCESS=true" >> $GITHUB_ENV
         else
-          echo "未找到主执行文件，请检查项目结构"
+          echo "未找到主执行文件"
           ls -la
         fi
         
-        # 记录结束时间
         echo "END_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
         
-    # 添加Server酱结果通知
+    # 修复后的Server酱通知步骤
     - name: Server酱通知
-      if: always()  # 无论脚本成功失败都发送通知
+      if: always()
       run: |
-        # 设置通知内容
         if [ "${{ env.SUCCESS }}" = "true" ]; then
           TITLE="小黑盒签到成功"
-          CONTENT="脚本执行时间: ${{ env.START_TIME }} 至 ${{ env.END_TIME }}"
           STATUS="✅"
         else
           TITLE="小黑盒签到失败!"
-          CONTENT="执行时间: ${{ env.START_TIME }} - 请检查日志排查问题"
           STATUS="❌"
         fi
+
+        # 构造Markdown（使用\\n避免JSON解析错误）
+        MARKDOWN="## $TITLE $STATUS\\n\\n"
+        MARKDOWN+="- **执行时间**: ${{ env.START_TIME }} → ${{ env.END_TIME }}\\n"
+        MARKDOWN+="- **作业链接**: [点击查看](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\\n\\n"
+        MARKDOWN+="> GitHub Actions自动推送"
+
+        # 关键修复：转义特殊字符
+        ESCAPED_MD=$(echo "$MARKDOWN" | sed 's/"/\\"/g; s/$/\\n/;' | tr -d '\n')
         
-        # 组装Markdown格式消息
-        MARKDOWN_CONTENT="## ${TITLE} ${STATUS}\n\n" 
-        MARKDOWN_CONTENT+="- **任务名称**: 小黑盒签到\n"
-        MARKDOWN_CONTENT+="- **执行时间**: ${{ env.START_TIME }} → ${{ env.END_TIME }}\n"
-        MARKDOWN_CONTENT+="- **执行结果**: $([ \"${{ env.SUCCESS }}\" = \"true\" ] && echo \"成功\" || echo \"失败\")\n"
-        MARKDOWN_CONTENT+="- **作业链接**: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\n"
-        MARKDOWN_CONTENT+="> 来自 GitHub Actions 自动通知"
+        # 发送请求（带错误重试）
+        max_retries=2
+        retry_count=0
+        while [ $retry_count -lt $max_retries ]; do
+          response=$(curl -s -X POST \
+            "https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send" \
+            -H 'Content-Type: application/json' \
+            -d "{\"title\": \"$TITLE\", \"desp\": \"$ESCAPED_MD\"}")
+          
+          if echo "$response" | grep -q '"errno":0'; then
+            echo "✅ 通知发送成功"
+            break
+          else
+            echo "⚠️ 重试中 ($((retry_count+1))/$max_retries): $response"
+            sleep 3
+            ((retry_count++))
+          fi
+        done
         
-        # 调用Server酱API发送通知
-        curl -X POST \
-          https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send \
-          -H 'Content-Type: application/json' \
-          -d "{
-                \"title\": \"$TITLE\",
-                \"desp\": \"$MARKDOWN_CONTENT\"
-              }"
-              
-        echo "Server酱通知已发送"
+        if [ $retry_count -eq $max_retries ]; then
+          echo "❌ 最终通知发送失败"
+        fi
         
     - name: 上传日志
       if: always()
@@ -149,26 +125,4 @@ jobs:
         path: |
           *.log
           logs/
-          log/
         retention-days: 7
-
----
-
-# Server酱配置指南
-
-## 1. 获取Server酱SendKey
-
-1. 访问 [Server酱官网](https://sct.ftqq.com/)
-2. 使用微信登录并获取SendKey
-3. 复制您的SendKey备用
-
-## 2. 添加GitHub Secret
-
-1. 在仓库设置中转到 `Settings` > `Secrets and variables` > `Actions`
-2. 点击 `New repository secret`
-3. 创建名为 `SCKEY` 的secret
-4. 粘贴您从Server酱获取的SendKey
-
-## 3. 通知效果
-
-通知消息格式如下：
