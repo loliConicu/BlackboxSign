@@ -2,13 +2,15 @@ name: 小黑盒每日签到
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # UTC 22:00 = 北京时间6:00
-    - cron: '10 22 * * *'  # 备用时间
-  workflow_dispatch:
+    # 每天早上8点执行 (UTC时间，北京时间需要减8小时)
+    - cron: '0 0 * * *'
+    - cron: '0 2 * * *'
+    - cron: '0 4 * * *'  # 北京时间12点
+  workflow_dispatch:  # 允许手动触发
   push:
-    分支: [ main, master ]
+    branches: [ main, master ]
   pull_request:
-    分支: [ main, master ]
+    branches: [ main, master ]
 
 jobs:
   sign:
@@ -36,116 +38,69 @@ jobs:
         if [ -f package.json ]; then
           npm install
         else
+          # 如果没有package.json，安装常见的签到脚本依赖
           npm install axios cheerio crypto-js
         fi
         
     - name: 运行签到脚本
       env:
+        # 从GitHub Secrets中获取敏感信息
         BLACKBOX_USERNAME: ${{ secrets.BLACKBOX_USERNAME }}
         BLACKBOX_PASSWORD: ${{ secrets.BLACKBOX_PASSWORD }}
         BLACKBOX_TOKEN: ${{ secrets.BLACKBOX_TOKEN }}
+        # 小黑盒相关环境变量
         BLACKBOX_COOKIE: ${{ secrets.BLACKBOX_COOKIE }}
         BLACKBOX_USERID: ${{ secrets.BLACKBOX_USERID }}
         BLACKBOX_SESSDATA: ${{ secrets.BLACKBOX_SESSDATA }}
-        SCKEY: ${{ secrets.SCKEY }}  # Server酱密钥
+        # 推送相关配置
+        PUSH_KEY: ${{ secrets.PUSH_KEY }}
+        BARK_PUSH: ${{ secrets.BARK_PUSH }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        DD_BOT_TOKEN: ${{ secrets.DD_BOT_TOKEN }}
+        DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
+        QYWX_WEBHOOK: ${{ secrets.QYWX_WEBHOOK }}
+        # 其他可能需要的环境变量
+        SCKEY: ${{ secrets.SCKEY }}
+        SENDKEY: ${{ secrets.SENDKEY }}
+        # 青龙面板相关
+        QL_URL: ${{ secrets.QL_URL }}
+        QL_CLIENT_ID: ${{ secrets.QL_CLIENT_ID }}
+        QL_CLIENT_SECRET: ${{ secrets.QL_CLIENT_SECRET }}
+        # 设置默认值防止undefined错误
         NODE_ENV: production
         TZ: Asia/Shanghai
       run: |
-        echo "START_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        
+        # 检查关键环境变量
         echo "检查环境变量..."
         if [ -z "$BLACKBOX_USERNAME" ] && [ -z "$BLACKBOX_COOKIE" ]; then
-          echo "⚠️ 未设置 BLACKBOX_USERNAME 或 BLACKBOX_COOKIE"
+          echo "⚠️  警告: 未设置 BLACKBOX_USERNAME 或 BLACKBOX_COOKIE"
+          echo "请在 GitHub Secrets 中添加必要的认证信息"
         fi
         
+        # 根据项目结构调整主脚本文件名
         if [ -f "BlackBoxSign.js" ]; then
-          node BlackBoxSign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本失败"
+          echo "执行 BlackBoxSign.js..."
+          node BlackBoxSign.js || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "main.js" ]; then
-          node main.js && echo "SUCCESS=true" >> $GITHUB_ENV
+          echo "执行 main.js..."
+          node main.js || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "sign.js" ]; then
-          node sign.js && echo "SUCCESS=true" >> $GITHUB_ENV
+          echo "执行 sign.js..."
+          node sign.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "blackbox.js" ]; then
+          echo "执行 blackbox.js..."
+          node blackbox.js || echo "❌ 脚本执行失败，退出码: $?"
+        elif [ -f "run.js" ]; then
+          echo "执行 run.js..."
+          node run.js || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "index.js" ]; then
-          node index.js && echo "SUCCESS=true" >> $GITHUB_ENV
+          echo "执行 index.js..."
+          node index.js || echo "❌ 脚本执行失败，退出码: $?"
         else
-          echo "未找到主执行文件"
+          echo "未找到主执行文件，请检查项目结构"
           ls -la
         fi
-        
-        echo "END_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        - name: Server酱通知
-  if: always()
-  run: |
-    # 1. 动态生成标题和状态
-    if [ "${{ env.SUCCESS }}" = "true" ]; then
-      TITLE="🟢 小黑盒签到成功"
-      STATUS="✅ 执行完成"
-      EMoji="🎉"
-    else
-      TITLE="🔴 小黑盒签到失败!"
-      STATUS="❌ 执行异常"
-      EMoji="⚠️"
-    fi
-    
-    # 2. 构造Markdown内容（使用规范的Markdown格式）
-    MARKDOWN="# $TITLE $EMoji\n\n"
-    MARKDOWN+="## 任务概况\n"
-    MARKDOWN+="- **执行时间**：${{ env.START_TIME }} → ${{ env.END_TIME }}\n"
-    MARKDOWN+="- **运行状态**：$STATUS\n"
-    MARKDOWN+="- **仓库地址**：https://github.com/${{ github.repository }}\n"
-    MARKDOWN+="- **作业链接**：[点击查看详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n"
-    
-    # 3. 动态添加诊断信息
-    if [ "${{ env.SUCCESS }}" != "true" ]; then
-      MARKDOWN+="## 可能原因\n"
-      MARKDOWN+="- 检查环境变量是否正确配置（COOKIE/TOKEN）\n"
-      MARKDOWN+="- 确认脚本文件是否存在或更新\n"
-      MARKDOWN+="- 查看仓库日志文件（已上传至 artifacts）\n"
-    fi
-    
-    MARKDOWN+="> 由 GitHub Actions 自动推送 | 🔗 [查看工作流](${{ github.server_url }}/${{ github.repository }}/actions/workflows/${{ github.workflow }})"
-    
-    # 4. 使用jq安全构建JSON数据
-    JSON_DATA=$(jq -n --arg title "$TITLE" --arg desp "$MARKDOWN" '{title: $title, desp: $desp}')
-    
-    # 5. 增强版API请求（带重试和详细日志）
-    SERVER_API="https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send"
-    MAX_RETRIES=3
-    RETRY_COUNT=0
-    SUCCESS_FLAG=false
-    
-    echo "准备发送的JSON数据: $JSON_DATA"
-    
-    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-      # 发送请求并捕获响应
-      RESPONSE=$(curl -s -X POST \
-        "$SERVER_API" \
-        -H "Content-Type: application/json" \
-        -d "$JSON_DATA")
-      
-      # 解析响应状态（增加错误处理）
-      ERROR_CODE=$(echo "$RESPONSE" | jq -r '.errno // .code // -1')
-      ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .msg // "未知错误"')
-      
-      # 打印调试信息
-      echo "API响应: $RESPONSE"
-      echo "解析的错误码: $ERROR_CODE"
-      echo "解析的错误信息: $ERROR_MSG"
-      
-      if [ "$ERROR_CODE" -eq 0 ]; then
-        echo "✅ 通知发送成功 (第$((RETRY_COUNT+1))次尝试)"
-        SUCCESS_FLAG=true
-        break
-      else
-        echo "⚠️ 通知发送失败 (第$((RETRY_COUNT+1))次尝试): $ERROR_MSG"
-        ((RETRY_COUNT++))
-        sleep $((2^RETRY_COUNT))  # 指数退避策略：2s→4s→8s
-      fi
-    done
-    
-    if [ "$SUCCESS_FLAG" = false ]; then
-      echo "❌ 最终通知发送失败，已达到最大重试次数"
-      echo "建议手动访问 Server酱后台 检查 SendKey 有效性"
-    fi
         
     - name: 上传日志
       if: always()
@@ -155,4 +110,62 @@ jobs:
         path: |
           *.log
           logs/
+          log/
         retention-days: 7
+
+---
+
+# 使用说明
+
+## 1. 设置GitHub Secrets
+
+在你的GitHub仓库中，前往 `Settings` > `Secrets and variables` > `Actions`，添加以下secrets：
+
+### 必需的Secrets：
+- `BLACKBOX_USERNAME`: 小黑盒用户名
+- `BLACKBOX_PASSWORD`: 小黑盒密码
+- `BLACKBOX_TOKEN`: 小黑盒token（如果需要）
+- `BLACKBOX_COOKIE`: 小黑盒Cookie（推荐，更稳定）
+- `BLACKBOX_USERID`: 小黑盒用户ID
+- `BLACKBOX_SESSDATA`: 小黑盒会话数据
+
+### 可选的推送Secrets：
+- `PUSH_KEY`: Server酱推送key
+- `BARK_PUSH`: Bark推送key
+- `TG_BOT_TOKEN`: Telegram机器人token
+- `TG_USER_ID`: Telegram用户ID
+- `DD_BOT_TOKEN`: 钉钉机器人token
+- `DD_BOT_SECRET`: 钉钉机器人secret
+- `QYWX_WEBHOOK`: 企业微信webhook
+
+## 2. 工作流配置
+
+### 定时任务：
+- 默认每天UTC 0点执行（北京时间8点）
+- 可以修改cron表达式来调整执行时间
+
+### 手动触发：
+- 在Actions页面可以手动运行工作流
+- 用于测试或紧急执行
+
+## 3. 文件结构适配
+
+工作流会自动寻找以下主执行文件：
+- `BlackBoxSign.js` （当前项目的主文件）
+- `main.js`
+- `sign.js`
+- `blackbox.js`
+- `run.js`
+- `index.js`
+
+如果你的主文件名不同，请修改工作流中的运行脚本部分。
+
+## 4. 时区调整
+
+如果需要调整执行时间，修改cron表达式：
+```yaml
+# 北京时间每天8点执行
+- cron: '0 0 * * *'  # UTC 0点 = 北京时间8点
+# 北京时间每天12点执行  
+- cron: '0 4 * * *'  # UTC 4点 = 北京时间12点
+```
