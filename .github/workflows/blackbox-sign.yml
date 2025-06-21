@@ -6,9 +6,9 @@ on:
     - cron: '10 22 * * *'  # 备用时间
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    分支: [ main, master ]
   pull_request:
-    branches: [ main, master ]
+    分支: [ main, master ]
 
 jobs:
   sign:
@@ -72,77 +72,80 @@ jobs:
         fi
         
         echo "END_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        
-    # ====== 优化后的Server酱通知（关键修改） ======
-    - name: Server酱通知
-      if: always()
-      run: |
-        # 1. 动态生成标题和状态
-        if [ "${{ env.SUCCESS }}" = "true" ]; then
-          TITLE="🟢 小黑盒签到成功"
-          STATUS="✅ 执行完成"
-          EMoji="🎉"
-        else
-          TITLE="🔴 小黑盒签到失败!"
-          STATUS="❌ 执行异常"
-          EMoji="⚠️"
-        fi
-        
-        # 2. 构造Markdown内容（增强可读性）
-        MARKDOWN="## $TITLE $EMoji\n\n"
-        MARKDOWN+="### 任务概况\n"
-        MARKDOWN+="- **执行时间**：${{ env.START_TIME }} → ${{ env.END_TIME }}\n"
-        MARKDOWN+="- **运行状态**：$STATUS\n"
-        MARKDOWN+="- **仓库地址**：https://github.com/${{ github.repository }}\n"
-        MARKDOWN+="- **作业链接**：[点击查看详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n"
-        
-        # 3. 动态添加诊断信息（根据执行结果）
-        if [ "${{ env.SUCCESS }}" != "true" ]; then
-          MARKDOWN+="### 可能原因\n"
-          MARKDOWN+="- 检查环境变量是否正确配置（COOKIE/TOKEN）\n"
-          MARKDOWN+="- 确认脚本文件是否存在或更新\n"
-          MARKDOWN+="- 查看仓库日志文件（已上传至 artifacts）\n"
-        fi
-        
-        MARKDOWN+="> 由 GitHub Actions 自动推送 | 🔗 [查看工作流](${{ github.server_url }}/${{ github.repository }}/actions/workflows/${{ github.workflow }})"
-        
-        # 4. 安全转义（支持所有特殊字符）
-        ESCAPED_MD=$(echo "$MARKDOWN" | jq -sR 'gsub("\n"; "\\n") | gsub("\""; "\\\"")')
-        
-        # 5. 增强版API请求（带重试和详细日志）
-        SERVER_API="https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send"
-        MAX_RETRIES=3
-        RETRY_COUNT=0
-        SUCCESS_FLAG=false
-        
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-          # 发送请求并捕获响应
-          RESPONSE=$(curl -s -X POST \
-            "$SERVER_API" \
-            -H "Content-Type: application/json" \
-            -d "{\"title\": \"$TITLE\", \"desp\": \"$ESCAPED_MD\"}")
-          
-          # 解析响应状态（兼容新旧API格式）
-          ERROR_CODE=$(echo "$RESPONSE" | jq -r '.errno // .code')
-          ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .msg // "未知错误"')
-          
-          if [ "$ERROR_CODE" -eq 0 ]; then
-            echo "✅ 通知发送成功 (第$((RETRY_COUNT+1))次尝试)"
-            echo "响应内容: $RESPONSE"
-            SUCCESS_FLAG=true
-            break
-          else
-            echo "⚠️ 通知发送失败 (第$((RETRY_COUNT+1))次尝试): $ERROR_MSG"
-            echo "响应内容: $RESPONSE"
-            ((RETRY_COUNT++))
-            sleep $((2^RETRY_COUNT))  # 指数退避策略：2s→4s→8s
-          fi
-        done
-        
-        if [ "$SUCCESS_FLAG" = false ]; then
-          echo "❌ 最终通知发送失败，已达到最大重试次数"
-          echo "建议手动访问 Server酱后台 检查 SendKey 有效性"
-        fi
+        - name: Server酱通知
+  if: always()
+  run: |
+    # 1. 动态生成标题和状态
+    if [ "${{ env.SUCCESS }}" = "true" ]; then
+      TITLE="🟢 小黑盒签到成功"
+      STATUS="✅ 执行完成"
+      EMoji="🎉"
+    else
+      TITLE="🔴 小黑盒签到失败!"
+      STATUS="❌ 执行异常"
+      EMoji="⚠️"
+    fi
+    
+    # 2. 构造Markdown内容（使用规范的Markdown格式）
+    MARKDOWN="# $TITLE $EMoji\n\n"
+    MARKDOWN+="## 任务概况\n"
+    MARKDOWN+="- **执行时间**：${{ env.START_TIME }} → ${{ env.END_TIME }}\n"
+    MARKDOWN+="- **运行状态**：$STATUS\n"
+    MARKDOWN+="- **仓库地址**：https://github.com/${{ github.repository }}\n"
+    MARKDOWN+="- **作业链接**：[点击查看详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n"
+    
+    # 3. 动态添加诊断信息
+    if [ "${{ env.SUCCESS }}" != "true" ]; then
+      MARKDOWN+="## 可能原因\n"
+      MARKDOWN+="- 检查环境变量是否正确配置（COOKIE/TOKEN）\n"
+      MARKDOWN+="- 确认脚本文件是否存在或更新\n"
+      MARKDOWN+="- 查看仓库日志文件（已上传至 artifacts）\n"
+    fi
+    
+    MARKDOWN+="> 由 GitHub Actions 自动推送 | 🔗 [查看工作流](${{ github.server_url }}/${{ github.repository }}/actions/workflows/${{ github.workflow }})"
+    
+    # 4. 使用jq安全构建JSON数据
+    JSON_DATA=$(jq -n --arg title "$TITLE" --arg desp "$MARKDOWN" '{title: $title, desp: $desp}')
+    
+    # 5. 增强版API请求（带重试和详细日志）
+    SERVER_API="https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send"
+    MAX_RETRIES=3
+    RETRY_COUNT=0
+    SUCCESS_FLAG=false
+    
+    echo "准备发送的JSON数据: $JSON_DATA"
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+      # 发送请求并捕获响应
+      RESPONSE=$(curl -s -X POST \
+        "$SERVER_API" \
+        -H "Content-Type: application/json" \
+        -d "$JSON_DATA")
+      
+      # 解析响应状态（增加错误处理）
+      ERROR_CODE=$(echo "$RESPONSE" | jq -r '.errno // .code // -1')
+      ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .msg // "未知错误"')
+      
+      # 打印调试信息
+      echo "API响应: $RESPONSE"
+      echo "解析的错误码: $ERROR_CODE"
+      echo "解析的错误信息: $ERROR_MSG"
+      
+      if [ "$ERROR_CODE" -eq 0 ]; then
+        echo "✅ 通知发送成功 (第$((RETRY_COUNT+1))次尝试)"
+        SUCCESS_FLAG=true
+        break
+      else
+        echo "⚠️ 通知发送失败 (第$((RETRY_COUNT+1))次尝试): $ERROR_MSG"
+        ((RETRY_COUNT++))
+        sleep $((2^RETRY_COUNT))  # 指数退避策略：2s→4s→8s
+      fi
+    done
+    
+    if [ "$SUCCESS_FLAG" = false ]; then
+      echo "❌ 最终通知发送失败，已达到最大重试次数"
+      echo "建议手动访问 Server酱后台 检查 SendKey 有效性"
+    fi
         
     - name: 上传日志
       if: always()
