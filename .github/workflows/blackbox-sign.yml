@@ -2,10 +2,9 @@ name: 小黑盒每日签到
 
 on:
   schedule:
-    # 每天早上8点执行 (UTC时间，北京时间需要减8小时)
-    - cron: '0 0 * * *'
-    - cron: '0 2 * * *'
-    - cron: '0 4 * * *'  # 北京时间12点
+    # 调整执行时间为北京时间6:00和6:10（UTC时间22:00和22:10）
+    - cron: '0 22 * * *'   # UTC 22:00 = 北京时间6:00
+    - cron: '10 22 * * *'  # UTC 22:10 = 北京时间6:10
   workflow_dispatch:  # 允许手动触发
   push:
     branches: [ main, master ]
@@ -61,7 +60,7 @@ jobs:
         DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
         QYWX_WEBHOOK: ${{ secrets.QYWX_WEBHOOK }}
         # 其他可能需要的环境变量
-        SCKEY: ${{ secrets.SCKEY }}
+        SCKEY: ${{ secrets.SCKEY }}         # Server酱推送密钥
         SENDKEY: ${{ secrets.SENDKEY }}
         # 青龙面板相关
         QL_URL: ${{ secrets.QL_URL }}
@@ -71,6 +70,9 @@ jobs:
         NODE_ENV: production
         TZ: Asia/Shanghai
       run: |
+        # 记录开始时间用于Server酱通知
+        echo "START_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+        
         # 检查关键环境变量
         echo "检查环境变量..."
         if [ -z "$BLACKBOX_USERNAME" ] && [ -z "$BLACKBOX_COOKIE" ]; then
@@ -81,26 +83,63 @@ jobs:
         # 根据项目结构调整主脚本文件名
         if [ -f "BlackBoxSign.js" ]; then
           echo "执行 BlackBoxSign.js..."
-          node BlackBoxSign.js || echo "❌ 脚本执行失败，退出码: $?"
+          node BlackBoxSign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "main.js" ]; then
           echo "执行 main.js..."
-          node main.js || echo "❌ 脚本执行失败，退出码: $?"
+          node main.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "sign.js" ]; then
           echo "执行 sign.js..."
-          node sign.js || echo "❌ 脚本执行失败，退出码: $?"
+          node sign.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "blackbox.js" ]; then
           echo "执行 blackbox.js..."
-          node blackbox.js || echo "❌ 脚本执行失败，退出码: $?"
+          node blackbox.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "run.js" ]; then
           echo "执行 run.js..."
-          node run.js || echo "❌ 脚本执行失败，退出码: $?"
+          node run.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         elif [ -f "index.js" ]; then
           echo "执行 index.js..."
-          node index.js || echo "❌ 脚本执行失败，退出码: $?"
+          node index.js && echo "SUCCESS=true" >> $GITHUB_ENV || echo "❌ 脚本执行失败，退出码: $?"
         else
           echo "未找到主执行文件，请检查项目结构"
           ls -la
         fi
+        
+        # 记录结束时间
+        echo "END_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+        
+    # 添加Server酱结果通知
+    - name: Server酱通知
+      if: always()  # 无论脚本成功失败都发送通知
+      run: |
+        # 设置通知内容
+        if [ "${{ env.SUCCESS }}" = "true" ]; then
+          TITLE="小黑盒签到成功"
+          CONTENT="脚本执行时间: ${{ env.START_TIME }} 至 ${{ env.END_TIME }}"
+          STATUS="✅"
+        else
+          TITLE="小黑盒签到失败!"
+          CONTENT="执行时间: ${{ env.START_TIME }} - 请检查日志排查问题"
+          STATUS="❌"
+        fi
+        
+        # 组装Markdown格式消息
+        MARKDOWN_CONTENT="## ${TITLE} ${STATUS}\n\n" 
+        MARKDOWN_CONTENT+="- **任务名称**: 小黑盒签到\n"
+        MARKDOWN_CONTENT+="- **执行时间**: ${{ env.START_TIME }} → ${{ env.END_TIME }}\n"
+        MARKDOWN_CONTENT+="- **执行结果**: $([ \"${{ env.SUCCESS }}\" = \"true\" ] && echo \"成功\" || echo \"失败\")\n"
+        MARKDOWN_CONTENT+="- **作业链接**: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\n"
+        MARKDOWN_CONTENT+="> 来自 GitHub Actions 自动通知"
+        
+        # 调用Server酱API发送通知
+        curl -X POST \
+          https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send \
+          -H 'Content-Type: application/json' \
+          -d "{
+                \"title\": \"$TITLE\",
+                \"desp\": \"$MARKDOWN_CONTENT\"
+              }"
+              
+        echo "Server酱通知已发送"
         
     - name: 上传日志
       if: always()
@@ -115,57 +154,21 @@ jobs:
 
 ---
 
-# 使用说明
+# Server酱配置指南
 
-## 1. 设置GitHub Secrets
+## 1. 获取Server酱SendKey
 
-在你的GitHub仓库中，前往 `Settings` > `Secrets and variables` > `Actions`，添加以下secrets：
+1. 访问 [Server酱官网](https://sct.ftqq.com/)
+2. 使用微信登录并获取SendKey
+3. 复制您的SendKey备用
 
-### 必需的Secrets：
-- `BLACKBOX_USERNAME`: 小黑盒用户名
-- `BLACKBOX_PASSWORD`: 小黑盒密码
-- `BLACKBOX_TOKEN`: 小黑盒token（如果需要）
-- `BLACKBOX_COOKIE`: 小黑盒Cookie（推荐，更稳定）
-- `BLACKBOX_USERID`: 小黑盒用户ID
-- `BLACKBOX_SESSDATA`: 小黑盒会话数据
+## 2. 添加GitHub Secret
 
-### 可选的推送Secrets：
-- `PUSH_KEY`: Server酱推送key
-- `BARK_PUSH`: Bark推送key
-- `TG_BOT_TOKEN`: Telegram机器人token
-- `TG_USER_ID`: Telegram用户ID
-- `DD_BOT_TOKEN`: 钉钉机器人token
-- `DD_BOT_SECRET`: 钉钉机器人secret
-- `QYWX_WEBHOOK`: 企业微信webhook
+1. 在仓库设置中转到 `Settings` > `Secrets and variables` > `Actions`
+2. 点击 `New repository secret`
+3. 创建名为 `SCKEY` 的secret
+4. 粘贴您从Server酱获取的SendKey
 
-## 2. 工作流配置
+## 3. 通知效果
 
-### 定时任务：
-- 默认每天UTC 0点执行（北京时间8点）
-- 可以修改cron表达式来调整执行时间
-
-### 手动触发：
-- 在Actions页面可以手动运行工作流
-- 用于测试或紧急执行
-
-## 3. 文件结构适配
-
-工作流会自动寻找以下主执行文件：
-- `BlackBoxSign.js` （当前项目的主文件）
-- `main.js`
-- `sign.js`
-- `blackbox.js`
-- `run.js`
-- `index.js`
-
-如果你的主文件名不同，请修改工作流中的运行脚本部分。
-
-## 4. 时区调整
-
-如果需要调整执行时间，修改cron表达式：
-```yaml
-# 北京时间每天8点执行
-- cron: '0 0 * * *'  # UTC 0点 = 北京时间8点
-# 北京时间每天12点执行  
-- cron: '0 4 * * *'  # UTC 4点 = 北京时间12点
-```
+通知消息格式如下：
